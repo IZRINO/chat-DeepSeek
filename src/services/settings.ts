@@ -1,4 +1,14 @@
 import { create } from 'zustand'
+import {
+  DEFAULT_API_BASE_URL,
+  DEFAULT_CHAT_MODEL,
+  DEFAULT_CONTEXT_TOKENS,
+  DEFAULT_MAX_OUTPUT_TOKENS,
+  DEFAULT_THINKING_EFFORT,
+  isTokenLimit,
+  normalizeApiBaseUrl,
+  type ChatApiConfig,
+} from './api/config.js'
 import type { TtsVoice } from './api/speech.js'
 import { normalizeLocation, type UserLocation } from './location.js'
 
@@ -8,8 +18,7 @@ export type Locale = 'zh-CN' | 'en-US'
 export type ThemePreference = 'light' | 'dark' | 'system'
 
 /** 本机设置，存 localStorage：API Key、语言、主题、位置、朗读音色、深度思考与智能搜索开关、侧边栏收起状态 */
-type Settings = {
-  apiKey: string | null
+type Settings = ChatApiConfig & {
   locale: Locale
   themePreference: ThemePreference
   location: UserLocation | null
@@ -21,6 +30,12 @@ type Settings = {
 
 const KEYS = {
   apiKey: 'chat-demo:api-key',
+  baseUrl: 'chat-demo:api-base-url',
+  model: 'chat-demo:api-model',
+  effort: 'chat-demo:thinking-effort',
+  searchApiKey: 'chat-demo:search-api-key',
+  contextTokens: 'chat-demo:context-tokens',
+  maxOutputTokens: 'chat-demo:max-output-tokens',
   locale: 'chat-demo:locale',
   location: 'chat-demo:location',
   themePreference: 'chat-demo:theme-preference',
@@ -87,8 +102,30 @@ const initialThemePreference = (): ThemePreference => {
 /** 未保存过时使用服务端默认音色 stella（海星） */
 const initialTtsVoice = (): TtsVoice => (read(KEYS.ttsVoice) === 'tide' ? 'tide' : 'stella')
 
+const initialEffort = () => {
+  const saved = read(KEYS.effort)
+  return saved === 'low' || saved === 'max' ? saved : DEFAULT_THINKING_EFFORT
+}
+
+const readTokenLimit = (key: string, fallback: number) => {
+  const value = Number(read(key))
+  return isTokenLimit(value) ? value : fallback
+}
+
+const initialContextTokens = Math.max(2, readTokenLimit(KEYS.contextTokens, DEFAULT_CONTEXT_TOKENS))
+
 export const useSettings = create<Settings>(() => ({
   apiKey: read(KEYS.apiKey),
+  baseUrl: normalizeApiBaseUrl(read(KEYS.baseUrl) ?? '') ?? DEFAULT_API_BASE_URL,
+  model: read(KEYS.model)?.trim() || DEFAULT_CHAT_MODEL,
+  effort: initialEffort(),
+  searchApiKey: read(KEYS.searchApiKey),
+  contextTokens: initialContextTokens,
+  maxOutputTokens: Math.min(
+    readTokenLimit(KEYS.maxOutputTokens, DEFAULT_MAX_OUTPUT_TOKENS),
+    DEFAULT_MAX_OUTPUT_TOKENS,
+    initialContextTokens - 1
+  ),
   locale: initialLocale(),
   location: initialLocation(),
   themePreference: initialThemePreference(),
@@ -119,9 +156,15 @@ export const setTtsVoice = (ttsVoice: TtsVoice) => {
   useSettings.setState({ ttsVoice })
 }
 
-export const setApiKey = (apiKey: string | null) => {
-  write(KEYS.apiKey, apiKey)
-  useSettings.setState({ apiKey })
+export const setApiConfig = (config: ChatApiConfig) => {
+  write(KEYS.apiKey, config.apiKey)
+  write(KEYS.baseUrl, config.baseUrl)
+  write(KEYS.model, config.model)
+  write(KEYS.effort, config.effort)
+  write(KEYS.searchApiKey, config.searchApiKey)
+  write(KEYS.contextTokens, String(config.contextTokens))
+  write(KEYS.maxOutputTokens, String(config.maxOutputTokens))
+  useSettings.setState(config)
 }
 
 export const setThinking = (thinking: boolean) => {

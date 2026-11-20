@@ -1,5 +1,6 @@
 import type { TranslationMessage } from '../../i18n/index.js'
 import type { ApiErrorKind } from '../api/client.js'
+import type { ThinkingEffort } from '../api/config.js'
 import type {
   ChatModel,
   MessageUsage,
@@ -17,6 +18,8 @@ import type {
 export type FileAttachment = {
   id: string
   serverId: string | null
+  /** Files API 地址，旧记录缺省时属于构建默认服务。 */
+  serverBaseUrl?: string
   name: string
   size: number
   /** 附件类别；导入时沿用归档的 is_image，不由 MIME 识别结果决定。 */
@@ -77,8 +80,10 @@ export type AssistantMessage = MessageBranch & {
   createdAt: number
   /** 未记录模型时为 null，续写使用当前默认模型。 */
   model: ChatModel | null
+  apiBaseUrl?: string
   /** 请求时是否开启深度思考 */
   thinking?: boolean
+  effort?: ThinkingEffort
   /** 请求时是否声明 deepseek_web_search；关闭时仍声明 deepseek_read_url */
   search?: boolean
   /** 本轮请求的系统信息快照；各回答版本独立保存，续写沿用。历史消息中缺省的快照保持为空。 */
@@ -92,6 +97,9 @@ export type AssistantMessage = MessageBranch & {
   stopDetails?: StopDetails
   /** 最近一次请求的用量，续写后更新 */
   usage?: MessageUsage
+  /** 本条回复各次已报告的用量总和，包括独立检索与续写。 */
+  totalTokens?: number
+  outputRate?: number
   error?: {
     /** upload：发送前补传附件失败，请求没有发出 */
     kind: ApiErrorKind | 'upload'

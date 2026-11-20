@@ -49,6 +49,23 @@
   );
 }
 
+.metrics {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  column-gap: 16px;
+  row-gap: 2px;
+  margin-top: 7px;
+  color: var(--dsw-alias-label-secondary);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  line-height: 18px;
+}
+
+.metrics span {
+  white-space: nowrap;
+}
+
 .caveat {
   width: 100%;
   padding: 6px 0;

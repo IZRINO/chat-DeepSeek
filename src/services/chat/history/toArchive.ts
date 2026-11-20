@@ -1,4 +1,5 @@
 import type { ServerToolUseBlock } from '../../api/types.js'
+import { usageTokens } from '../../api/usage.js'
 import { getVisibleMessages, normalizeSession } from '../branches.js'
 import { describeReply } from '../describe.js'
 import type { AssistantMessage, Message, ReplyBlock, Session, UserMessage } from '../types.js'
@@ -197,14 +198,9 @@ const replyStatus = ({ status, stopReason }: AssistantMessage): ChatMessageStatu
   }
 }
 
-/** 最近一次请求的输入（含缓存）与输出之和，即这一条结束时的上下文 token。 */
-const contextTokens = ({ usage }: AssistantMessage) =>
-  usage
-    ? usage.input_tokens +
-      usage.cache_creation_input_tokens +
-      usage.cache_read_input_tokens +
-      usage.output_tokens
-    : 0
+/** 本回复已报告的用量，兼容旧记录只保存最近一次用量。 */
+const accumulatedTokens = ({ totalTokens, usage }: AssistantMessage) =>
+  totalTokens ?? (usage ? usageTokens(usage) : 0)
 
 /** 消息按父节点优先重新编号为 1…n，保证 parent_id 小于 id。 */
 const numberMessages = (messages: Message[]) => {
@@ -249,7 +245,7 @@ export const toSessionFile = (original: Session, exportImage: ExportImage): Sess
       status: message.role === 'user' ? 'FINISHED' : replyStatus(message),
       thinking_enabled: reply?.thinking ?? false,
       search_enabled: reply?.search ?? false,
-      accumulated_token_usage: message.role === 'user' ? 0 : contextTokens(message),
+      accumulated_token_usage: message.role === 'user' ? 0 : accumulatedTokens(message),
       inserted_at: iso(message.createdAt),
       fragments:
         message.role === 'user' ? userFragments(message, exportImage) : assistantFragments(message),

@@ -1,10 +1,12 @@
+import type { ThinkingEffort } from './config.js'
+
 /**
  * Messages API（Anthropic 兼容格式）协议类型，只取本应用用到的部分。
  * 文档：https://api-docs.deepseek.com/zh-cn/api/create-message
  * 声明 deepseek_web_search / deepseek_read_url 或设置 safety_check.level 为 high 时进入扩展模式。
  */
 
-export type ChatModel = 'deepseek-flash' | 'deepseek-v4-pro'
+export type ChatModel = string
 
 // ---------- 响应：内容块 ----------
 
@@ -134,6 +136,12 @@ export type FileBlockParam = {
   source: { type: 'file'; file_id: string }
 }
 
+/** 搜索服务使用图片原件，不接收第三方 Files API 的 ID。 */
+export type InlineImageParam = {
+  type: 'image'
+  source: { type: 'base64'; media_type: string; data: string }
+}
+
 /** 接口接受的调用块；历史只回传 kind 为 read_link 的调用 */
 export type ServerToolUseBlockParam = Pick<
   ServerToolUseBlock,
@@ -157,7 +165,7 @@ export type AssistantBlockParam =
 export type MessageParam =
   /** Chat Engine 扩展角色，位于对应 user 前；需服务端支持 latest_reminder。 */
   | { role: 'latest_reminder'; content: string }
-  | { role: 'user'; content: string | (FileBlockParam | TextBlockParam)[] }
+  | { role: 'user'; content: string | (FileBlockParam | InlineImageParam | TextBlockParam)[] }
   | { role: 'assistant'; content: AssistantBlockParam[] }
 
 /** 开启联网搜索与边想边搜 */
@@ -177,8 +185,10 @@ export type CreateMessageRequest = {
   system: string
   messages: MessageParam[]
   thinking: { type: 'enabled' | 'disabled' }
-  tools: (DeepseekWebSearchTool | DeepseekReadUrlTool)[]
-  safety_check: { level: 'high' }
+  output_config?: { effort: ThinkingEffort }
+  max_tokens?: number
+  tools?: (DeepseekWebSearchTool | DeepseekReadUrlTool)[]
+  safety_check?: { level: 'high' }
   title?: { enabled: boolean }
 }
 
@@ -191,8 +201,8 @@ export type StopDetails = { type: 'refusal'; category: null; explanation: null }
 export type MessageUsage = {
   /** 未命中缓存的输入 Token */
   input_tokens: number
-  cache_creation_input_tokens: number
-  cache_read_input_tokens: number
+  cache_creation_input_tokens?: number
+  cache_read_input_tokens?: number
   /** message_start 中为 0，message_delta 中为全轮累计值 */
   output_tokens: number
   /** 仅当 message_delta 中有对外输出的搜索结果块时出现 */
@@ -214,7 +224,7 @@ export type MessageStreamEvent =
   | {
       type: 'message_start'
       /** id 为不带 msg_ 前缀的 UUID，等于响应头 x-ds-request-id */
-      message: { id: string; model: string; usage?: MessageUsage }
+      message: { id: string; model: string; usage?: Partial<MessageUsage> }
     }
   | { type: 'content_block_start'; index: number; content_block: OutputBlockStart }
   | { type: 'content_block_delta'; index: number; delta: ContentBlockDelta }
@@ -228,7 +238,7 @@ export type MessageStreamEvent =
         stop_details?: StopDetails
         title?: string
       }
-      usage?: MessageUsage
+      usage?: Partial<MessageUsage>
     }
   | { type: 'message_stop' }
   | { type: 'ping' }

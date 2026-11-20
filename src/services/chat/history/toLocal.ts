@@ -217,6 +217,7 @@ const toAssistant = (message: ChatMessage): AssistantMessage => {
     role: 'assistant',
     createdAt: time(message.inserted_at),
     model: null,
+    totalTokens: message.accumulated_token_usage || undefined,
     thinking: message.thinking_enabled,
     search: message.search_enabled,
     prefix: false,

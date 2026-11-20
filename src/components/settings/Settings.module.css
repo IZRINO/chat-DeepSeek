@@ -204,88 +204,53 @@
   color: var(--dsw-alias-state-error-primary);
 }
 
-.apiKey {
+.apiForm {
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  padding-bottom: 4px;
+  gap: 10px;
+  padding: 12px 0 20px;
 }
 
-.apiKeySaved,
-.apiKeyInput {
+.apiField {
   display: flex;
-  align-items: center;
-  box-sizing: border-box;
-  height: var(--ds-control-height-xl);
-  font-size: 14px;
-  line-height: 24px;
-}
-
-.apiKeySaved {
-  justify-content: space-between;
-  padding: 0 10px 0 16px;
-  border-radius: 28px;
-  background-color: var(--dsw-specific-login-input);
-}
-
-.apiKeyMask {
+  flex-direction: column;
+  gap: 4px;
   min-width: 0;
-  overflow: hidden;
-  white-space: nowrap;
-  color: var(--dsw-alias-label-caption);
-  user-select: none;
+  font-size: 14px;
+  line-height: 22px;
 }
 
-.apiKeyInput {
-  gap: 12px;
-  padding: 0 14px;
-  border-radius: 22px;
+.apiControl {
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+  min-height: 38px;
+  padding: 6px 12px;
   border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 12px;
+  background-color: var(--dsw-specific-login-input);
+  color: var(--dsw-alias-label-primary);
+  font: inherit;
   transition: border-color var(--ds-transition-duration) var(--ds-ease-in-out);
 
-  &:focus-within {
-    border-color: var(--dsw-alias-brand-primary);
+  &:focus-visible {
+    outline: 2px solid var(--dsw-alias-brand-primary);
+    outline-offset: -1px;
   }
 
-  input {
-    flex: 1;
-    min-width: 0;
-    height: 100%;
-    padding: 0;
-    border: none;
-    outline: none;
-    background: transparent;
-    color: var(--dsw-alias-label-primary);
-    font: inherit;
-    caret-color: var(--dsw-alias-brand-text);
-
-    &::placeholder {
-      color: var(--dsw-alias-label-caption);
-    }
-  }
-}
-
-.divider {
-  flex-shrink: 0;
-  width: 1px;
-  height: 20px;
-  background-color: var(--dsw-alias-border-l2);
-}
-
-.confirm {
-  flex-shrink: 0;
-  padding: 0;
-  border: none;
-  background: none;
-  color: var(--dsw-alias-brand-text);
-  font: inherit;
-  line-height: 22px;
-  cursor: pointer;
-
-  &:disabled {
+  &::placeholder {
     color: var(--dsw-alias-label-caption);
-    cursor: default;
   }
+}
+
+.apiColumns {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 10rem);
+  gap: 12px;
+}
+
+.apiSave {
+  align-self: flex-end;
 }
 
 @media not all and (min-width: 768px) {
@@ -361,49 +326,26 @@
     flex: 1 1 auto;
   }
 
-  .apiKey {
-    padding-bottom: 0;
+  .apiForm {
+    padding-top: 0;
   }
 
-  .apiKeySaved,
-  .apiKeyInput {
-    height: 52px;
-    padding: 0 12px 0 16px;
-    border: none;
-    border-radius: 40px;
-    background-color: var(--dsw-specific-login-input);
+  .apiControl {
+    min-height: 44px;
     font-size: 16px;
   }
 
-  .apiKeySaved svg {
-    width: 20px;
-    height: 20px;
+  .apiColumns {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 7rem);
+  }
+
+  .apiSave {
+    width: 100%;
+    min-height: 44px;
   }
 
   .cellButton svg {
     display: none;
-  }
-}
-
-.mobileConfirm {
-  display: block;
-  flex-shrink: 0;
-  width: calc(100% - 16px);
-  height: 52px;
-  margin: 16px 8px 0;
-  border: none;
-  border-radius: 100px;
-  background-color: var(--dsw-alias-button-primary-fill);
-  color: var(--dsw-static-neutral-bluish-00);
-  font: inherit;
-  font-size: 17px;
-  line-height: 24px;
-  font-weight: 500;
-  cursor: pointer;
-
-  &:disabled {
-    opacity: 0.45;
-    cursor: default;
   }
 }
 

@@ -1,8 +1,15 @@
 import { create } from 'zustand'
 import { createId } from '../../utils/id.js'
-import { ApiError, streamMessage } from '../api/client.js'
-import type { ChatModel, CreateMessageRequest } from '../api/types.js'
+import { streamChat } from '../api/chat.js'
+import { ApiError } from '../api/client.js'
+import {
+  DEFAULT_API_BASE_URL,
+  isDeepSeekApi,
+  messagesBaseUrl,
+  type ApiConnection,
+} from '../api/config.js'
 import { extractFileIds, getFileErrorCode, isRetryableApiError } from '../api/errors.js'
+import { usageTokens } from '../api/usage.js'
 import { cancelUpload, describeUploadError, uploadAttachment, useUploads } from '../attachments.js'
 import { useSettings } from '../settings.js'
 import { appendBranch, getVisibleMessages, normalizeSession, selectVersion } from './branches.js'
@@ -32,29 +39,12 @@ import {
   type UserMessage,
 } from './types.js'
 
-/** deepseek-flash 同时支持深度思考与图片输入 */
-const MODEL: ChatModel = 'deepseek-flash'
-/** 所有生成请求统一携带的助手身份说明 */
-const SYSTEM_PROMPT = '该助手为DeepSeek，由深度求索公司创造。'
 /** 保留最近打开的详情；当前会话、生成中及尚未成功保存的会话不淘汰。 */
 const SESSION_CACHE_LIMIT = 5
-/** 安全审核固定开启，所有请求都走扩展模式 */
-const SAFETY_CHECK = { level: 'high' } as const
 /** 服务端判定 file_id 失效后，重新补传并重发的最多次数（不含首次请求） */
 const FILE_RETRY_LIMIT = 2
 /** 退避基数，第 n 次重试等待 2^n 倍；连续失败达到上限就放弃，把原始报错展示出来 */
 const FILE_RETRY_BASE_DELAY = 1000
-
-/** 阅读链接始终开启，智能搜索开关控制是否另行声明搜索工具（含边想边搜）。 */
-const serverTools = (search: boolean): CreateMessageRequest['tools'] => {
-  const tools: CreateMessageRequest['tools'] = [
-    { type: 'deepseek_read_url', name: 'deepseek_read_url' },
-  ]
-  if (search) {
-    tools.push({ type: 'deepseek_web_search', name: 'deepseek_web_search' })
-  }
-  return tools
-}
 
 /** 允许自动补标题的请求；手动重命名后取消本轮标题写入，包含主动清空标题的情况。 */
 const titleRequests = new Set<AbortController>()
@@ -255,13 +245,15 @@ export const bindChatPersistence = () => {
 
 /** 按当前开关创建回复：深度思考对应 thinking，智能搜索控制 deepseek_web_search。 */
 const createReply = (): AssistantMessage => {
-  const { thinking, search } = useSettings.getState()
+  const { baseUrl, model, effort, thinking, search } = useSettings.getState()
   return {
     id: createId(),
     role: 'assistant',
     createdAt: Date.now(),
-    model: MODEL,
+    model,
+    apiBaseUrl: baseUrl,
     thinking,
+    effort,
     search,
     prefix: true,
     status: 'pending',
@@ -588,9 +580,10 @@ export const sendMessage = (targetSessionId: string | null) => {
     id: createId(),
     role: 'user',
     content: text,
-    files: files.map(({ id, serverId, name, size, isImage, mimeType }) => ({
+    files: files.map(({ id, serverId, serverBaseUrl, name, size, isImage, mimeType }) => ({
       id,
       serverId,
+      serverBaseUrl,
       name,
       size,
       isImage,
@@ -705,12 +698,12 @@ export const continueReply = (sessionId: string, messageId: string) => {
   ) {
     return
   }
-  const { thinking, search } = useSettings.getState()
+  const { model, effort, thinking, search } = useSettings.getState()
   const reply: AssistantMessage = {
     ...previous,
-    // 未记录请求配置的回复，续写时使用默认模型和当前开关。
-    model: previous.model ?? MODEL,
+    model: previous.model ?? model,
     thinking: previous.thinking ?? thinking,
+    effort: previous.effort ?? effort,
     search: previous.search ?? search,
     status: 'pending',
     stopReason: undefined,
@@ -752,7 +745,11 @@ export const retryUpload = (sessionId: string, messageId: string) => {
 type Request = { history: Message[]; question: UserMessage; prefix?: AssistantMessage }
 
 /** 把补传得到的 serverId 写回会话里所有引用同一附件的消息（编辑、重新生成会共用附件） */
-const saveServerIds = (sessionId: string, serverIds: Map<string, string>) => {
+const saveServerIds = (
+  sessionId: string,
+  serverIds: Map<string, string>,
+  serverBaseUrl: string
+) => {
   if (serverIds.size === 0) {
     return
   }
@@ -763,7 +760,9 @@ const saveServerIds = (sessionId: string, serverIds: Map<string, string>) => {
         ? {
             ...message,
             files: message.files.map((file) =>
-              serverIds.has(file.id) ? { ...file, serverId: serverIds.get(file.id) ?? null } : file
+              serverIds.has(file.id)
+                ? { ...file, serverId: serverIds.get(file.id) ?? null, serverBaseUrl }
+                : file
             ),
           }
         : message
@@ -776,19 +775,40 @@ const saveServerIds = (sessionId: string, serverIds: Map<string, string>) => {
  * 附件的服务端 id：已有直接用；正在上传的等待同一任务；否则读取本地原件补传。
  * 本地也没有原件（导入的文档附件只有元数据）时返回 null，该附件只展示、不进入请求。
  */
-const ensureServerId = async (apiKey: string, file: FileAttachment): Promise<string | null> => {
-  if (file.serverId) {
+const matchesFilesApi = (file: FileAttachment, baseUrl: string) =>
+  (file.serverBaseUrl ?? messagesBaseUrl(DEFAULT_API_BASE_URL)) === baseUrl
+
+const loadSearchImages = async (sessionId: string, files: FileAttachment[]) => {
+  const originals = pendingFiles.get(sessionId)
+  const images = await Promise.all(
+    files
+      .filter((file) => file.isImage)
+      .map(async (file) => {
+        const blob =
+          originals?.find(({ id }) => id === file.id)?.blob ?? (await db.loadFile(file.id))
+        return blob && (blob.type ? blob : new Blob([blob], { type: file.mimeType }))
+      })
+  )
+  return images.filter((image): image is Blob => image !== undefined)
+}
+
+const ensureServerId = async (
+  connection: ApiConnection,
+  file: FileAttachment
+): Promise<string | null> => {
+  const baseUrl = messagesBaseUrl(connection.baseUrl)
+  if (file.serverId && matchesFilesApi(file, baseUrl)) {
     return file.serverId
   }
   const task = useUploads.getState().tasks[file.id]
-  if (task?.status === 'done') {
+  if (task?.status === 'done' && task.serverBaseUrl === baseUrl) {
     return task.serverId
   }
   const blob = await db.loadFile(file.id)
   if (!blob) {
     return null
   }
-  return uploadAttachment(apiKey, file.id, blob, file.name, file.isImage)
+  return uploadAttachment(connection, file.id, blob, file.name, file.isImage)
 }
 
 /** 用会话里的最新消息替换请求快照：重传前会重置附件的 serverId，快照必须跟着更新 */
@@ -813,12 +833,17 @@ const refreshRequest = (sessionId: string, request: Request): Request => {
  * - 历史轮次（仅进入上下文的）中没有 serverId 的附件，多为导入的图片：从最新的消息往前逐张补传，
  *   失败静默跳过，该附件不进入本次请求，下次发送时再试。
  */
-const prepareFiles = async (sessionId: string, request: Request, signal: AbortSignal) => {
+const prepareFiles = async (
+  sessionId: string,
+  request: Request,
+  connection: ApiConnection,
+  signal: AbortSignal
+) => {
   const epoch = historyEpoch
   // 服务端判定 file_id 失效时会清掉会话里的 serverId，先用最新消息替换请求快照，
   // 否则快照里仍是旧 id，补传会直接复用它。
   request = refreshRequest(sessionId, request)
-  const apiKey = useSettings.getState().apiKey ?? ''
+  const baseUrl = messagesBaseUrl(connection.baseUrl)
   const serverIds = new Map<string, string>()
   // 停止生成立即生效；上传本身不取消（输入框与其他消息可能共用同一任务），完成后照常写回 serverId
   const aborted = new Promise<never>((_, reject) => {
@@ -826,7 +851,7 @@ const prepareFiles = async (sessionId: string, request: Request, signal: AbortSi
   })
   const uploads = Promise.allSettled(
     request.question.files.map(async (file) => {
-      const serverId = await ensureServerId(apiKey, file)
+      const serverId = await ensureServerId(connection, file)
       if (serverId) {
         serverIds.set(file.id, serverId)
       }
@@ -834,7 +859,7 @@ const prepareFiles = async (sessionId: string, request: Request, signal: AbortSi
   )
   void uploads.then(() => {
     if (epoch === historyEpoch) {
-      saveServerIds(sessionId, serverIds)
+      saveServerIds(sessionId, serverIds, baseUrl)
     }
   })
   const results = await Promise.race([uploads, aborted])
@@ -846,7 +871,11 @@ const prepareFiles = async (sessionId: string, request: Request, signal: AbortSi
   const pending = new Map<string, FileAttachment>()
   for (const [user] of getContextRounds(request.history).toReversed()) {
     for (const file of user.files) {
-      if (!file.serverId && !serverIds.has(file.id) && !pending.has(file.id)) {
+      if (
+        (!file.serverId || !matchesFilesApi(file, baseUrl)) &&
+        !serverIds.has(file.id) &&
+        !pending.has(file.id)
+      ) {
         pending.set(file.id, file)
       }
     }
@@ -854,10 +883,10 @@ const prepareFiles = async (sessionId: string, request: Request, signal: AbortSi
   for (const file of pending.values()) {
     signal.throwIfAborted()
     try {
-      const serverId = await Promise.race([ensureServerId(apiKey, file), aborted])
+      const serverId = await Promise.race([ensureServerId(connection, file), aborted])
       if (serverId) {
         serverIds.set(file.id, serverId)
-        saveServerIds(sessionId, new Map([[file.id, serverId]]))
+        saveServerIds(sessionId, new Map([[file.id, serverId]]), baseUrl)
       }
     } catch {
       signal.throwIfAborted()
@@ -866,11 +895,15 @@ const prepareFiles = async (sessionId: string, request: Request, signal: AbortSi
 
   // 用补齐后的会话重新取历史与提问，保证请求里都是 serverId
   const session = getSession(sessionId)
-  const resolve = <T extends Message>(message: T): T =>
-    (session?.messages.find((m) => m.id === message.id) as T | undefined) ?? message
+  const resolve = (message: Message): Message => {
+    const current = session?.messages.find((m) => m.id === message.id) ?? message
+    return current.role === 'user'
+      ? { ...current, files: current.files.filter((file) => matchesFilesApi(file, baseUrl)) }
+      : current
+  }
   return {
     history: request.history.map(resolve),
-    question: resolve(request.question),
+    question: resolve(request.question) as UserMessage,
     prefix: request.prefix,
   }
 }
@@ -961,11 +994,35 @@ const waitForRetry = (attempt: number, signal: AbortSignal) =>
  */
 const streamReply = async (sessionId: string, initial: AssistantMessage, request: Request) => {
   const controller = new AbortController()
+  const settings = useSettings.getState()
+  const sameService =
+    messagesBaseUrl(initial.apiBaseUrl ?? DEFAULT_API_BASE_URL) ===
+    messagesBaseUrl(settings.baseUrl)
+  const config = {
+    baseUrl: settings.baseUrl,
+    apiKey: settings.apiKey,
+    model: (sameService ? initial.model : null) ?? settings.model,
+    effort: initial.effort ?? settings.effort,
+    searchApiKey: settings.searchApiKey,
+    contextTokens: settings.contextTokens,
+    maxOutputTokens: settings.maxOutputTokens,
+  }
+  const search = Boolean(initial.search && config.searchApiKey?.trim())
   if (!getSession(sessionId)?.title) {
     titleRequests.add(controller)
   }
   set((state) => ({ streaming: { ...state.streaming, [sessionId]: controller } }))
-  let reply = initial
+  let previousTotal = initial.totalTokens ?? (initial.usage && usageTokens(initial.usage))
+  let reply: AssistantMessage = {
+    ...initial,
+    model: config.model,
+    effort: config.effort,
+    search,
+    apiBaseUrl: config.baseUrl,
+    usage: undefined,
+    totalTokens: previousTotal,
+    outputRate: undefined,
+  }
   let frame = 0
   const flush = () => {
     cancelAnimationFrame(frame)
@@ -980,7 +1037,7 @@ const streamReply = async (sessionId: string, initial: AssistantMessage, request
       let preparing = true
       let receivedContent = false
       try {
-        const prepared = await prepareFiles(sessionId, request, controller.signal)
+        const prepared = await prepareFiles(sessionId, request, config, controller.signal)
         preparing = false
         // 附件就绪后获取本轮信息；续写沿用原回答快照，重新生成的快照独立保存。
         const latestReminder = prepared.prefix
@@ -996,20 +1053,23 @@ const streamReply = async (sessionId: string, initial: AssistantMessage, request
           initial.thinking ?? false,
           latestReminder
         )
-        const events = streamMessage(
-          useSettings.getState().apiKey ?? '',
+        const events = streamChat(
+          config,
           {
-            model: initial.model ?? MODEL,
-            system: SYSTEM_PROMPT,
             messages,
-            thinking: { type: initial.thinking ? 'enabled' : 'disabled' },
-            safety_check: SAFETY_CHECK,
-            tools: serverTools(initial.search ?? false),
-            ...(titleRequests.has(controller) ? { title: { enabled: true } } : {}),
+            thinking: initial.thinking ?? false,
+            search,
+            title: titleRequests.has(controller),
+            searchImages:
+              search && messages.at(-1)?.role === 'user'
+                ? await loadSearchImages(sessionId, prepared.question.files)
+                : undefined,
           },
           controller.signal
         )
         const blockIndexes = new Map<number, number>()
+        let searchTokens: number | undefined
+        let answerStartedAt: number | undefined
         for await (const event of events) {
           receivedContent ||= event.type === 'content_block_start'
           if (
@@ -1024,7 +1084,37 @@ const streamReply = async (sessionId: string, initial: AssistantMessage, request
             updateSession(sessionId, (session) => (session.title ? session : { ...session, title }))
             titleRequests.delete(controller)
           }
-          reply = applyEvent(reply, event, Date.now(), blockIndexes)
+          if (event.type === 'search_usage') {
+            searchTokens = usageTokens(event.usage)
+          } else {
+            if (event.type === 'message_start') {
+              answerStartedAt = performance.now()
+            }
+            reply = applyEvent(reply, event, Date.now(), blockIndexes)
+          }
+          if (
+            event.type === 'message_start' ||
+            event.type === 'message_delta' ||
+            event.type === 'search_usage'
+          ) {
+            const answerTokens = reply.usage && usageTokens(reply.usage)
+            if (answerTokens !== undefined || searchTokens !== undefined) {
+              reply = {
+                ...reply,
+                totalTokens: (previousTotal ?? 0) + (answerTokens ?? 0) + (searchTokens ?? 0),
+              }
+            }
+          }
+          if (
+            event.type === 'message_delta' &&
+            event.usage?.output_tokens &&
+            answerStartedAt !== undefined
+          ) {
+            const seconds = (performance.now() - answerStartedAt) / 1000
+            if (seconds >= 0.016) {
+              reply = { ...reply, outputRate: event.usage.output_tokens / seconds }
+            }
+          }
           if (document.visibilityState === 'hidden') {
             flush()
           } else {
@@ -1032,6 +1122,18 @@ const streamReply = async (sessionId: string, initial: AssistantMessage, request
           }
         }
         reply = settleReply(reply, 'done', Date.now())
+        if (
+          !isDeepSeekApi(config.baseUrl) &&
+          reply.stopReason !== 'refusal' &&
+          titleRequests.has(controller)
+        ) {
+          const title = Array.from(prepared.question.content.trim().replace(/\s+/g, ' '))
+            .slice(0, 40)
+            .join('')
+          if (title) {
+            updateSession(sessionId, (session) => (session.title ? session : { ...session, title }))
+          }
+        }
         break
       } catch (error) {
         if (controller.signal.aborted) {
@@ -1053,6 +1155,8 @@ const streamReply = async (sessionId: string, initial: AssistantMessage, request
           !receivedContent &&
           reuploadInvalidatedFiles(sessionId, request, error)
         ) {
+          previousTotal = reply.totalTokens
+          reply = { ...reply, usage: undefined, outputRate: undefined }
           await waitForRetry(attempt, controller.signal)
           if (controller.signal.aborted) {
             reply = settleReply(reply, 'stopped', Date.now())

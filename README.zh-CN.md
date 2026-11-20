@@ -55,7 +55,9 @@ API Key 和设置保存在浏览器 localStorage，会话及附件原件保存�
 
 [rspack.config.ts](rspack.config.ts) 默认连接 `https://api.deepseek.com`。`createConfig({ apiOrigin, devServer })` 支持自定义 API 地址和开发服务器代理。
 
-聊天默认使用 `deepseek-flash`，通过 Anthropic 兼容的 Messages / Files API 通信；语音使用 ASR / TTS 接口。请求使用搜索、链接阅读、标题和 `latest_reminder` 等扩展，接入服务需支持相应能力。附件实际支持的格式以服务端校验为准。
+在设置 → API 设置中填写 Anthropic Messages 兼容地址、模型 ID 和聊天 API Key。默认模型为 `deepseek-flash`，开启深度思考时默认强度为 `high`。配置独立的 DeepSeek 搜索 Key 后，DeepSeek 处理本轮联网搜索、图搜或链接阅读，然后由所选聊天模型根据返回的资料作答。
+
+上下文长度和输出上限默认分别为 1M（1048576）和 384K（393216）token。发送消息时按配置预留输出空间，估算并裁剪超出的旧轮次。对话底部根据服务端用量显示输出速度、当前会话总消耗、最近一轮缓存命中率和上下文占用。
 
 ```text
 src/

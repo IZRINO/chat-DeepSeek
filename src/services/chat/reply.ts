@@ -6,6 +6,7 @@ import type {
   OutputBlockStart,
   TextBlockParam,
 } from '../api/types.js'
+import { mergeUsage } from '../api/usage.js'
 import type {
   AssistantMessage,
   FileAttachment,
@@ -79,7 +80,7 @@ export const applyEvent = (
     reply.status === 'streaming' ? reply : { ...reply, status: 'streaming' }
   switch (event.type) {
     case 'message_start':
-      return { ...next, usage: event.message.usage ?? next.usage }
+      return { ...next, usage: mergeUsage(undefined, event.message.usage) }
     case 'content_block_start': {
       blockIndexes.delete(event.index)
       const block = toReplyBlock(event.content_block, now)
@@ -129,7 +130,7 @@ export const applyEvent = (
         ...next,
         stopReason: event.delta.stop_reason,
         stopDetails: event.delta.stop_details,
-        usage: event.usage ?? next.usage,
+        usage: mergeUsage(next.usage, event.usage),
       }
     default:
       return next

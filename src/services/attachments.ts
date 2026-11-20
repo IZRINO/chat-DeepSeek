@@ -1,6 +1,7 @@
 import { create } from 'zustand'
 import type { LinkedMessage, TranslationMessage } from '../i18n/index.js'
 import { uploadFile } from './api/client.js'
+import { messagesBaseUrl, type ApiConnection } from './api/config.js'
 import { classifyApiError, getUploadErrorInfo, isRetryableApiError } from './api/errors.js'
 import type { FilePurpose } from './api/types.js'
 import { ACCEPT_FILE_EXTS } from './uploadExts.js'
@@ -118,7 +119,7 @@ const next = () => {
 
 /** 排队上传，最多同时上传 MAX_CONCURRENT 个；排队期间中止的任务不会发出请求 */
 const enqueueUpload = (
-  apiKey: string,
+  connection: ApiConnection,
   file: Blob,
   name: string,
   isImage: boolean,
@@ -132,7 +133,7 @@ const enqueueUpload = (
       }
       try {
         const body = file instanceof File ? file : new File([file], name, { type: file.type })
-        resolve((await uploadFile(apiKey, body, getUploadPurpose(name, isImage), signal)).id)
+        resolve((await uploadFile(connection, body, getUploadPurpose(name, isImage), signal)).id)
       } catch (error) {
         reject(error)
       }
@@ -147,7 +148,7 @@ const enqueueUpload = (
  */
 export type UploadTask =
   | { status: 'uploading' }
-  | { status: 'done'; serverId: string }
+  | { status: 'done'; serverId: string; serverBaseUrl: string }
   | { status: 'error'; error: TranslationMessage; retryable: boolean }
 
 type UploadState = { tasks: Record<string, UploadTask> }
@@ -161,28 +162,39 @@ const setTask = (id: string, task: UploadTask | null) =>
       : Object.fromEntries(Object.entries(state.tasks).filter(([key]) => key !== id)),
   }))
 
-const pending = new Map<string, { promise: Promise<string>; controller: AbortController }>()
+const pending = new Map<
+  string,
+  { promise: Promise<string>; controller: AbortController; serverBaseUrl: string }
+>()
 
 /** 开始（或复用进行中的）上传，返回服务端 file_id；失败时任务记为 error 并抛出原错误 */
 export const uploadAttachment = (
-  apiKey: string,
+  connection: ApiConnection,
   id: string,
   blob: Blob,
   name: string,
   isImage: boolean
 ): Promise<string> => {
   const current = pending.get(id)
-  if (current) {
+  const serverBaseUrl = messagesBaseUrl(connection.baseUrl)
+  if (current?.serverBaseUrl === serverBaseUrl && !current.controller.signal.aborted) {
     return current.promise
   }
+  current?.controller.abort()
   const controller = new AbortController()
+  const isCurrent = () => pending.get(id)?.controller === controller
   setTask(id, { status: 'uploading' })
-  const promise = enqueueUpload(apiKey, blob, name, isImage, controller.signal)
+  const promise = enqueueUpload(connection, blob, name, isImage, controller.signal)
     .then((serverId) => {
-      setTask(id, { status: 'done', serverId })
+      if (isCurrent()) {
+        setTask(id, { status: 'done', serverId, serverBaseUrl })
+      }
       return serverId
     })
     .catch((error: unknown) => {
+      if (!isCurrent()) {
+        throw error
+      }
       if (controller.signal.aborted) {
         setTask(id, null)
       } else {
@@ -200,8 +212,12 @@ export const uploadAttachment = (
       }
       throw error
     })
-    .finally(() => pending.delete(id))
-  pending.set(id, { promise, controller })
+    .finally(() => {
+      if (isCurrent()) {
+        pending.delete(id)
+      }
+    })
+  pending.set(id, { promise, controller, serverBaseUrl })
   return promise
 }
 
