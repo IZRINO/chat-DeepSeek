@@ -1,7 +1,19 @@
 import { isTauri } from '@tauri-apps/api/core'
 import { translate, type TranslationMessage } from '../../i18n/index.js'
-import { isDeepSeekApi, messagesBaseUrl, type ApiConnection } from './config.js'
+import {
+  isDeepSeekApi,
+  messagesBaseUrl,
+  type ApiConnection,
+} from './config.js'
 import { readMessageEvent } from './parseEvent.js'
+import {
+  diagnosticEndpoint,
+  networkReason,
+  reportMessageFailure,
+  type MessageDiagnostic,
+  type MessageStage,
+  type MessageTransport,
+} from './diagnostics.js'
 import { readServerSentEvents } from './sse.js'
 import type {
   ApiErrorBody,
@@ -28,13 +40,17 @@ export type ApiErrorKind =
 
 export class ApiError extends Error {
   readonly localMessage?: TranslationMessage
+  diagnostic?: MessageDiagnostic
+  serviceMessage?: string
+  requestId?: string
 
   constructor(
     readonly kind: ApiErrorKind,
     message: string | TranslationMessage,
-    readonly status?: number
+    readonly status?: number,
+    options?: ErrorOptions
   ) {
-    super(typeof message === 'string' ? message : translate(message.key, message.params))
+    super(typeof message === 'string' ? message : translate(message.key, message.params), options)
     this.name = 'ApiError'
     this.localMessage = typeof message === 'string' ? undefined : message
   }
@@ -46,6 +62,14 @@ const isErrorBody = (value: unknown): value is ApiErrorBody =>
   'error' in value &&
   typeof (value as ApiErrorBody).error?.message === 'string'
 
+const responseRequestId = (response?: Response) => {
+  const id =
+    response?.headers.get('x-ds-request-id') ??
+    response?.headers.get('request-id') ??
+    response?.headers.get('x-request-id')
+  return id && /^[\w.-]{1,120}$/.test(id) ? id : undefined
+}
+
 const readErrorResponse = async (
   response: Response,
   kind: 'http' | 'protocol' = 'http',
@@ -53,26 +77,30 @@ const readErrorResponse = async (
 ): Promise<ApiError> => {
   const text = await response.text().catch(() => '')
   let message = text || fallback
+  let serviceMessage: string | undefined
   try {
     const body: unknown = JSON.parse(text)
     if (isErrorBody(body)) {
       message = body.error.message
+      serviceMessage = message
     }
   } catch {
     // 非 JSON 响应体直接展示原文
   }
-  return new ApiError(kind, message, response.status)
+  const error = new ApiError(kind, message, response.status)
+  error.serviceMessage = serviceMessage
+  error.requestId = responseRequestId(response)
+  return error
 }
+
+const transportFor = (): MessageTransport => isTauri() ? 'rust-http' : 'browser-fetch'
 
 export const request = async (url: string, init: RequestInit): Promise<Response> => {
   let response: Response
   try {
     if (isTauri()) {
-      const { fetch: nativeFetch } = await import('@tauri-apps/plugin-http')
-      const headers = new Headers(init.headers)
-      headers.set('User-Agent', 'chat-DeepSeek')
-      // 原生插件不使用浏览器的 redirect 选项；不要把 API Key 跟随跳转发送。
-      response = await nativeFetch(url, { ...init, headers, maxRedirections: 0 })
+      const { nativeRequest } = await import('./native.js')
+      response = await nativeRequest(url, init)
     } else {
       response = await fetch(url, init)
     }
@@ -80,7 +108,14 @@ export const request = async (url: string, init: RequestInit): Promise<Response>
     if (init.signal?.aborted) {
       throw error
     }
-    throw new ApiError('network', error instanceof Error ? error.message : String(error))
+    throw new ApiError(
+      'network',
+      error instanceof Error ? error.message : String(error),
+      undefined,
+      {
+        cause: error,
+      }
+    )
   }
   if (!response.ok) {
     throw await readErrorResponse(response)
@@ -102,12 +137,13 @@ export const verifyApiKey = async (
   signal?: AbortSignal
 ): Promise<void> => {
   const root = connection.baseUrl.replace(/\/anthropic(?:\/v1)?$/, '')
-  await request(`${root}/models`, {
+  const response = await request(`${root}/models`, {
     method: 'GET',
     headers: { Authorization: `Bearer ${connection.apiKey ?? ''}` },
     redirect: 'error',
     signal,
   })
+  await response.body?.cancel()
 }
 
 /**
@@ -137,11 +173,12 @@ export const uploadFile = async (
 
 /** DELETE /anthropic/v1/files/{file_id} */
 export const deleteFile = async (connection: ApiConnection, fileId: string): Promise<void> => {
-  await request(`${messagesBaseUrl(connection.baseUrl)}/files/${encodeURIComponent(fileId)}`, {
+  const response = await request(`${messagesBaseUrl(connection.baseUrl)}/files/${encodeURIComponent(fileId)}`, {
     method: 'DELETE',
     headers: anthropicHeaders(connection, true),
     redirect: 'error',
   })
+  await response.body?.cancel()
 }
 
 const hasFile = (body: CreateMessageRequest) =>
@@ -161,19 +198,70 @@ const hasFile = (body: CreateMessageRequest) =>
 export async function* streamMessage(
   connection: ApiConnection,
   body: CreateMessageRequest,
+  signal: AbortSignal,
+  stage: MessageStage = 'chat'
+): AsyncGenerator<MessageStreamEvent> {
+  const url = `${messagesBaseUrl(connection.baseUrl)}/messages`
+  let response: Response | undefined
+  try {
+    response = await request(url, {
+      method: 'POST',
+      headers: {
+        ...anthropicHeaders(connection, hasFile(body)),
+        'Content-Type': 'application/json',
+        Accept: 'text/event-stream',
+      },
+      redirect: 'error',
+      body: JSON.stringify({ ...body, stream: true }),
+      signal,
+    })
+    yield* readMessageStream(response, signal)
+  } catch (cause) {
+    throw diagnoseFailure(
+      stage,
+      url,
+      connection.apiKey,
+      signal,
+      cause,
+      response,
+      response ? 'interrupted' : 'protocol'
+    )
+  }
+}
+
+export const diagnoseFailure = (
+  stage: MessageStage,
+  url: string,
+  key: string | null,
+  signal: AbortSignal,
+  cause: unknown,
+  response?: Response,
+  fallback: ApiErrorKind = 'protocol'
+) => {
+  signal.throwIfAborted()
+  const error =
+    cause instanceof ApiError ? cause : new ApiError(fallback, '', response?.status, { cause })
+  const safeMessage = key
+    ? error.serviceMessage?.replaceAll(key, '[redacted]')
+    : error.serviceMessage
+  const id = error.requestId ?? responseRequestId(response)
+  error.diagnostic = {
+    stage,
+    endpoint: diagnosticEndpoint(url),
+    transport: transportFor(),
+    reason:
+      error.kind === 'network' || error.kind === 'interrupted' ? networkReason(error) : undefined,
+    serviceMessage: safeMessage?.replace(/\s+/g, ' ').trim().slice(0, 400),
+    requestId: id && !(key && id.includes(key)) ? id : undefined,
+  }
+  reportMessageFailure(error.diagnostic, error.kind, error.status)
+  return error
+}
+
+async function* readMessageStream(
+  response: Response,
   signal: AbortSignal
 ): AsyncGenerator<MessageStreamEvent> {
-  const response = await request(`${messagesBaseUrl(connection.baseUrl)}/messages`, {
-    method: 'POST',
-    headers: {
-      ...anthropicHeaders(connection, hasFile(body)),
-      'Content-Type': 'application/json',
-      Accept: 'text/event-stream',
-    },
-    redirect: 'error',
-    body: JSON.stringify({ ...body, stream: true }),
-    signal,
-  })
   const contentType = response.headers.get('Content-Type') ?? ''
   if (!response.body || !contentType.includes('text/event-stream')) {
     throw await readErrorResponse(response, 'protocol', '')
@@ -188,10 +276,12 @@ export async function* streamMessage(
       }
     }
     if (isErrorBody(payload)) {
-      throw new ApiError('stream', payload.error.message)
+      const error = new ApiError('stream', payload.error.message, response.status)
+      error.serviceMessage = error.message
+      throw error
     }
     if (eventName === 'error') {
-      throw new ApiError('stream', data)
+      throw new ApiError('stream', data, response.status)
     }
     const event = readMessageEvent(payload)
     if (!event) {
@@ -203,5 +293,5 @@ export async function* streamMessage(
     }
   }
   // 服务端没有提供错误内容时保持为空，不推测断流原因。
-  throw new ApiError('interrupted', '')
+  throw new ApiError('interrupted', '', response.status)
 }

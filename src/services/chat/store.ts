@@ -1170,9 +1170,12 @@ const streamReply = async (sessionId: string, initial: AssistantMessage, request
         } else if (error instanceof ApiError) {
           reply = settleReply(reply, 'error', Date.now(), {
             kind: error.kind,
-            message: error.message,
+            message: error.diagnostic
+              ? (error.diagnostic.serviceMessage ?? error.diagnostic.reason ?? '')
+              : error.message,
             status: error.status,
             localMessage: error.localMessage,
+            diagnostic: error.diagnostic,
           })
         } else {
           reply = settleReply(reply, 'error', Date.now(), {

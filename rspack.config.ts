@@ -1,4 +1,5 @@
 import { readFileSync } from 'node:fs'
+import type { IncomingMessage, ServerResponse } from 'node:http'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { defineConfig } from '@rspack/cli'
@@ -14,6 +15,47 @@ const { version } = JSON.parse(
 const cssLoader = {
   loader: 'builtin:lightningcss-loader',
   options: { targets },
+}
+
+/** Local development only. Accept a fixed vocabulary, never log a request body or an arbitrary URL. */
+const logChatDiagnostic = (req: IncomingMessage, res: ServerResponse) => {
+  const { origin, host } = req.headers
+  if (
+    req.method !== 'POST' ||
+    !host ||
+    (origin !== `http://${host}` && origin !== `https://${host}`)
+  ) {
+    res.writeHead(403).end()
+    return
+  }
+  const parts =
+    /^\/(chat|search|readLink)\/(browser-fetch|webview-fetch|tauri-http)\/(network|http|protocol|stream|interrupted)\/(none|[1-5]\d\d)\/([a-zA-Z0-9_%.-]{1,220})$/.exec(
+      req.url ?? ''
+    )
+  if (!parts) {
+    res.writeHead(400).end()
+    return
+  }
+  const [, stage, transport, kind, status, encoded] = parts
+  let reason: string
+  try {
+    reason = decodeURIComponent(encoded)
+  } catch {
+    res.writeHead(400).end()
+    return
+  }
+  if (!/^[a-zA-Z0-9_ ·]{1,120}$/.test(reason)) {
+    res.writeHead(400).end()
+    return
+  }
+  const target =
+    stage === 'chat'
+      ? 'configured chat API'
+      : `https://api.deepseek.com/v1/tools/${stage === 'search' ? 'search' : 'fetch'}`
+  process.stderr.write(
+    `[chat-api] ${stage} | POST ${target} | ${transport} | ${kind} | HTTP ${status}${reason === 'none' ? '' : ` | ${reason}`}\n`
+  )
+  res.writeHead(204).end()
 }
 
 type ConfigOptions = {
@@ -86,7 +128,14 @@ export const createConfig = ({
     }),
   ],
   performance: { hints: false },
-  devServer: { port: 8090, ...devServer },
+  devServer: {
+    port: 8090,
+    setupMiddlewares: (middlewares) => [
+      { name: 'chat-diagnostic', path: '/__chat_diagnostic', middleware: logChatDiagnostic },
+      ...middlewares,
+    ],
+    ...devServer,
+  },
 })
 
 // eslint-disable-next-line import/no-default-export

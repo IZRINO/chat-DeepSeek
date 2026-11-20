@@ -137,7 +137,8 @@ export async function* streamChat(
           safety_check: safetyCheck,
           tools: serverTools(usesSearch),
         },
-        signal
+        signal,
+        usesSearch ? 'search' : 'readLink'
       )
       let usage: MessageUsage | undefined
       for await (const event of searchEvents) {
@@ -203,6 +204,9 @@ export async function* streamChat(
       }
     } catch (error) {
       signal.throwIfAborted()
+      if (error instanceof ApiError && error.diagnostic) {
+        throw error
+      }
       throw new ApiError('protocol', {
         key: 'searchApiRequestFailed',
         params: { message: error instanceof Error ? error.message : String(error) },

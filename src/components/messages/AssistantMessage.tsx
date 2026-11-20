@@ -53,7 +53,7 @@ export const AssistantMessage = memo(function AssistantMessage({
   const responseText = [answer?.text, notice?.presentation === 'response' ? notice.text : null]
     .filter(Boolean)
     .join('\n\n')
-  const copyText = responseText || notice?.text
+  const copyText = responseText || [notice?.text, notice?.details].filter(Boolean).join('\n')
   const waiting = streaming && view.steps.length === 0 && !view.answer && !message.thinking
   const summaryEntry = `${message.id}-summary`
   return (
@@ -94,7 +94,7 @@ export const AssistantMessage = memo(function AssistantMessage({
       ) : notice ? (
         <div className={styles.notice}>
           <IconWarningOutline16 />
-          <span>
+          <div>
             {notice.text}
             {notice.action === 'apiKey' ? (
               <>
@@ -121,7 +121,13 @@ export const AssistantMessage = memo(function AssistantMessage({
                 </a>
               </>
             ) : null}
-          </span>
+            {notice.details ? (
+              <details className={styles.noticeDetails}>
+                <summary>{t('requestDetails')}</summary>
+                <div>{notice.details}</div>
+              </details>
+            ) : null}
+          </div>
         </div>
       ) : null}
       {!streaming && !refused && view.searchResults.length > 0 ? (

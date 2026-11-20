@@ -69,7 +69,11 @@ const FILE_ERROR_PATTERNS: ReadonlyArray<readonly [FileErrorCode, RegExp]> = [
  * 其余错误（限流、余额、purpose 不合规等）不在这里处理，保持原有失败提示。
  */
 export const getFileErrorCode = (error: unknown): FileErrorCode | null => {
-  if (!(error instanceof ApiError) || error.status !== 400) {
+  if (
+    !(error instanceof ApiError) ||
+    error.status !== 400 ||
+    (error.diagnostic && error.diagnostic.stage !== 'chat')
+  ) {
     return null
   }
   return FILE_ERROR_PATTERNS.find(([, pattern]) => pattern.test(error.message))?.[0] ?? null

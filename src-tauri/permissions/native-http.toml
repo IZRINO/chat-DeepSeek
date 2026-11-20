@@ -1,0 +1,4 @@
+[[permission]]
+identifier = "allow-native-http"
+description = "Allow the local main window to make bounded chat API requests through Rust."
+commands.allow = ["native_http_prepare", "native_http_send", "native_http_read", "native_http_close"]

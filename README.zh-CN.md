@@ -7,13 +7,13 @@
 | 使用方式 | 状态 | 界面与 API |
 | --- | --- | --- |
 | [GitHub Pages 网页版](https://izrino.github.io/chat-DeepSeek/) | 已上线 | 浏览器加载静态页面，直接请求支持 HTTPS 和跨域访问的 API。首次使用请在设置中填写聊天 Key。 |
-| Windows、Android 安装版 | [v0.1.2 预览版](https://github.com/IZRINO/chat-DeepSeek/releases/tag/v0.1.2) | Tauri 2 随包提供界面，由设备的原生网络直接请求所配置的 HTTP 或 HTTPS API。 |
+| Windows、Android 安装版 | [v0.1.2 预览版](https://github.com/IZRINO/chat-DeepSeek/releases/tag/v0.1.2) | Tauri 2 随包提供界面，由设备直接请求所配置的 HTTP 或 HTTPS API。 |
 
 ### GitHub Pages 的跨域限制
 
 网页来源是 `https://izrino.github.io`。API 即使能用 HTTPS 访问，也必须允许这个来源执行 [CORS 预检](https://developer.mozilla.org/zh-CN/docs/Glossary/Preflight_request) 和实际请求。2026-11-20 实测 `https://lingtuapi.net/v1/messages` 对网页的 `OPTIONS` 预检返回 `403`，且缺少 `Access-Control-Allow-Origin`；浏览器因此没有发送聊天请求。服务商需要放行来源、方法及请求头（文本聊天使用 `content-type`、`x-api-key` 和 `anthropic-version`）。HTTPS 网页也不能直连公网的 `http://` API。
 
-安装版不受浏览器跨域限制，但仍需正确的 Base URL、Anthropic Messages 兼容接口、模型 ID 和 Key。直接使用 HTTP 时，Key、消息及附件会明文传输，优先选 HTTPS。
+安装版用原生网络请求第三方 API 和 DeepSeek 的独立 Search/Fetch API，不受浏览器跨域限制。聊天仍需正确的 Base URL、Anthropic Messages 兼容接口、模型 ID 和 Key。直接使用 HTTP 时，Key、消息及附件会明文传输，优先选 HTTPS。当前源码仅对 DeepSeek 官方 Messages 沿用 WebView `fetch`；已发布的 v0.1.2 未包含独立 Search/Fetch。
 
 如果使用自己管理的中转，在「设置 → API 设置」填入中转的 HTTPS Base URL（例如 `https://relay.example.com/v1`，不加 `/messages`）及对应的 Key 和模型 ID。中转需要接收 Anthropic Messages 请求并逐段转发 SSE，而不是等整段回复生成后再返回。给网页版使用时，CORS 由中转服务器放行。
 
@@ -45,10 +45,11 @@ pnpm build
 ```powershell
 pnpm tauri dev
 pnpm tauri build
+pnpm tauri build --config src-tauri/tauri.chatgpt.conf.json
 pnpm tauri android build --debug --apk --target aarch64
 ```
 
-Windows 安装程序在 `src-tauri/target/release/bundle/nsis/`。Android 命令生成 ARM64 调试 APK，产物在 `src-tauri/gen/android/app/build/outputs/apk/`；x86_64 模拟器用 `--target x86_64`。正式分发前需要配置 [Android 发布签名](https://v2.tauri.app/distribute/sign/android/)。应用可以离线打开，生成回答仍需联网。设计和验收范围见[应用封装](docs/app-packaging.md)。
+Windows 安装程序在 `src-tauri/target/release/bundle/nsis/`。后续发布 Release 时同时提供两版 Windows 安装包：正常版 `真DEEPSEEK_<version>_x64-setup.exe`（安装后主程序为 `chat-deepseek.exe`）与伪装版 `ChatGPT_<version>_x64-setup.exe`（通过 `src-tauri/tauri.chatgpt.conf.json` 覆写应用名与主程序名为 `ChatGPT.exe`）。Android 命令生成 ARM64 调试 APK，产物在 `src-tauri/gen/android/app/build/outputs/apk/`；x86_64 模拟器用 `--target x86_64`。正式分发前需要配置 [Android 发布签名](https://v2.tauri.app/distribute/sign/android/)。应用可以离线打开，生成回答仍需联网。设计和验收范围见[应用封装](docs/app-packaging.md)。
 
 ## 功能
 
@@ -78,9 +79,11 @@ API Key 和设置保存在 localStorage，会话及附件原件保存在 Indexed
 
 [rspack.config.ts](rspack.config.ts) 默认连接 `https://api.deepseek.com`。`createConfig({ apiOrigin, devServer })` 支持自定义 API 地址和开发服务器代理。
 
-在设置 → API 设置中填写 Anthropic Messages 兼容地址、模型 ID 和聊天 API Key。默认模型为 `deepseek-flash`，开启深度思考时默认强度为 `high`。配置独立的 DeepSeek 搜索 Key 后，DeepSeek 处理本轮联网搜索、图搜或链接阅读，然后由所选聊天模型根据返回的资料作答。
+在设置 → API 设置中填写 Anthropic Messages 兼容地址、模型 ID 和聊天 API Key。默认模型为 `deepseek-flash`，开启深度思考时默认强度为 `high`。另填 DeepSeek 官方搜索 Key 后，「智能搜索」直接调用 `POST /v1/tools/search`，将至多 5 条来源及摘要交给所选模型。提问含明确链接时，即使搜索开关关闭，也会改为 `POST /v1/tools/fetch` 读取前 3 个不同链接，不重复搜索。两者使用独立 Bearer Key，不支持以图搜图，[按有结果的请求次数计费](https://api-docs.deepseek.com/zh-cn/guides/search.md#billing)，不计入聊天 token。
 
-安装版沿用现有 Anthropic Messages 协议（也是 [dsh 支持的一种协议](https://github.com/deepseek-ai/deepseek-harness/blob/master/docs/user/guide/providers.zh.md#添加自定义模型-api)），请求使用自己的 `chat-DeepSeek` 客户端标识。只提供 OpenAI Chat Completions 等其他协议的服务不能直接使用；附件和语音也取决于服务商是否实现对应接口。
+消息失败时可展开「错误详情」。`pnpm dev` 或 `pnpm tauri dev` 的终端会输出 `[chat-api]`；Windows 调试版还会在 WebView2 报告官方 Messages 的底层网络错误时输出 `[chat-api:webview2]`。日志不包含 Key、消息正文或附件。
+
+安装版沿用现有 Anthropic Messages 协议（也是 [dsh 支持的一种协议](https://github.com/deepseek-ai/deepseek-harness/blob/master/docs/user/guide/providers.zh.md#添加自定义模型-api)），原生网络请求使用自己的 `chat-DeepSeek` 客户端标识。只提供 OpenAI Chat Completions 等其他协议的服务不能直接使用；附件和语音也取决于服务商是否实现对应接口。
 
 上下文长度和输出上限默认分别为 1M（1048576）和 384K（393216）token。发送消息时按配置预留输出空间，估算并裁剪超出的旧轮次。对话底部根据服务端用量显示输出速度、当前会话总消耗、最近一轮缓存命中率和上下文占用。
 

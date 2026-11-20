@@ -7,13 +7,13 @@ English | [简体中文](README.zh-CN.md)
 | Edition | Status | How it connects |
 | --- | --- | --- |
 | [GitHub Pages](https://izrino.github.io/chat-DeepSeek/) | Live | The browser loads the static site and calls an HTTPS API that allows cross-origin requests. Enter your chat API key in Settings. |
-| Windows and Android apps | [v0.1.2 preview](https://github.com/IZRINO/chat-DeepSeek/releases/tag/v0.1.2) | The apps bundle the UI with Tauri 2 and use native networking to connect directly to the configured HTTP or HTTPS API. |
+| Windows and Android apps | [v0.1.2 preview](https://github.com/IZRINO/chat-DeepSeek/releases/tag/v0.1.2) | The apps bundle the UI with Tauri 2 and connect directly to the configured HTTP or HTTPS API. |
 
 ### Cross-origin limits on GitHub Pages
 
 The web app's origin is `https://izrino.github.io`. Even over HTTPS, the API must allow [CORS preflights](https://developer.mozilla.org/en-US/docs/Glossary/Preflight_request) and actual requests from that origin. On 2026-11-20, `https://lingtuapi.net/v1/messages` responded to the web app's `OPTIONS` preflight with `403` and no `Access-Control-Allow-Origin` header, so the browser did not send the chat request. Ask the provider to allow the origin, methods, and request headers (`content-type`, `x-api-key`, and `anthropic-version` for text chat). An HTTPS page also cannot call a public `http://` API directly.
 
-Native apps are not subject to browser CORS, but still require the correct base URL, Anthropic Messages support, model ID, and API key. Plain HTTP transmits keys, messages, and attachments unencrypted; prefer HTTPS.
+The apps use native networking for third-party APIs and DeepSeek's standalone Search/Fetch APIs. Chat still requires the correct base URL, Anthropic Messages support, model ID, and key. Prefer HTTPS: plain HTTP transmits keys, messages, and attachments unencrypted. Only DeepSeek's official Messages endpoint uses WebView `fetch` in the current source. The published v0.1.2 does not include standalone Search/Fetch.
 
 For a relay you manage, enter its HTTPS base URL (for example, `https://relay.example.com/v1`, without `/messages`), API key, and model ID in Settings → API. The relay must accept Anthropic Messages requests and forward SSE chunks as they arrive. For web use, configure CORS on the relay.
 
@@ -45,10 +45,11 @@ Follow the [Tauri prerequisites](https://v2.tauri.app/start/prerequisites/) for 
 ```powershell
 pnpm tauri dev
 pnpm tauri build
+pnpm tauri build --config src-tauri/tauri.chatgpt.conf.json
 pnpm tauri android build --debug --apk --target aarch64
 ```
 
-The Windows installer is under `src-tauri/target/release/bundle/nsis/`. The Android command builds an ARM64 debug APK under `src-tauri/gen/android/app/build/outputs/apk/`; use `--target x86_64` for x86_64 emulators. Configure [Android release signing](https://v2.tauri.app/distribute/sign/android/) before distributing a release. The apps open offline, but generating replies still requires an API connection. See the [packaging notes (Chinese)](docs/app-packaging.md).
+The Windows installers are under `src-tauri/target/release/bundle/nsis/`. Future releases ship two Windows x64 NSIS installers: the standard build `真DEEPSEEK_<version>_x64-setup.exe` (`chat-deepseek.exe`) and the disguised build `ChatGPT_<version>_x64-setup.exe` (`ChatGPT.exe`, built with `src-tauri/tauri.chatgpt.conf.json`). The Android command builds an ARM64 debug APK under `src-tauri/gen/android/app/build/outputs/apk/`; use `--target x86_64` for x86_64 emulators. Configure [Android release signing](https://v2.tauri.app/distribute/sign/android/) before distributing a release. The apps open offline, but generating replies still requires an API connection. See the [packaging notes (Chinese)](docs/app-packaging.md).
 
 ## Features
 
@@ -78,9 +79,11 @@ Settings → Data → Delete all chats clears all local conversations, original 
 
 [rspack.config.ts](rspack.config.ts) uses `https://api.deepseek.com` by default. Use `createConfig({ apiOrigin, devServer })` to customize the API origin and development server proxy.
 
-Use Settings → API to configure an Anthropic Messages-compatible URL, model ID, and chat API key. The default model is `deepseek-flash` and DeepThink defaults to `high` when enabled. With a separate DeepSeek Search Key, DeepSeek handles the current turn’s web search, image search, or link reading, and the selected chat model answers using the results.
+Use Settings → API to configure an Anthropic Messages-compatible URL, model ID, and chat API key. The default model is `deepseek-flash`; DeepThink defaults to `high` when enabled. With a separate official DeepSeek key, Smart Search calls `POST /v1/tools/search` and passes up to five sources and summaries to the chat model. Explicit links use `POST /v1/tools/fetch` instead, up to three distinct links, even with Smart Search off. Both use Bearer auth, do not support image search, and are [billed per request returning results](https://api-docs.deepseek.com/guides/search#billing), not as chat tokens.
 
-The native apps use Anthropic Messages, [one of the protocols dsh supports](https://github.com/deepseek-ai/deepseek-harness/blob/master/docs/user/guide/providers.md#add-a-custom-model-api), and identify themselves as `chat-DeepSeek`. Services that only expose another protocol, such as OpenAI Chat Completions, are not directly compatible. Files and speech also require the corresponding endpoints.
+Expand **Error details** on a failed reply. `pnpm dev` and `pnpm tauri dev` print `[chat-api]` diagnostics in the terminal. Windows debug builds also print `[chat-api:webview2]` if WebView2 reports a network error for official Messages. Logs omit keys, message bodies, and attachments.
+
+The native apps use Anthropic Messages, [one of the protocols dsh supports](https://github.com/deepseek-ai/deepseek-harness/blob/master/docs/user/guide/providers.md#add-a-custom-model-api), and identify native HTTP requests as `chat-DeepSeek`. Services that only expose another protocol, such as OpenAI Chat Completions, are not directly compatible. Files and speech also require the corresponding endpoints.
 
 The context window and output limit default to 1M (1,048,576) and 384K (393,216) tokens. The client reserves space for the configured output and trims older rounds using a token estimate. The conversation footer uses reported usage to show output speed, total session tokens, cache hits, and context utilization.
 
