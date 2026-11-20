@@ -15,3 +15,13 @@
 
 - 共用代码的现有检查为 `pnpm type`、`pnpm lint` 和 `pnpm test`。PowerShell 下先设 `$env:NODE_ENV = 'production'`，再运行 `pnpm exec rspack build -c rspack.config.ts` 生成 `dist/`。
 - 渠道状态记录在[中文 README](README.zh-CN.md) 和[英文 README](README.md)。提交、推送和发布按用户本次指示执行。
+
+## Agent skills
+
+### Issue tracker
+
+工单与规格使用 `IZRINO/chat-DeepSeek` 的 GitHub Issues。见 `docs/agents/issue-tracker.md`。
+
+### Domain docs
+
+采用单上下文（single-context）。见 `docs/agents/domain.md`。
