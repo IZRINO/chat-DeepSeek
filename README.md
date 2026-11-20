@@ -1,10 +1,21 @@
-# chat-demo
+# 真DEEPSEEK
 
 English | [简体中文](README.zh-CN.md)
 
-A static chat demo powered by the DeepSeek API. No application backend is required: the browser connects directly to the configured API service.
+真DEEPSEEK uses one React and Rspack chat frontend for its web and packaged app editions.
 
-You can [try the app online](https://izrino.github.io/chat-DeepSeek/). Enter your API key in Settings before your first chat.
+| Edition | Status | How it connects |
+| --- | --- | --- |
+| [GitHub Pages](https://izrino.github.io/chat-DeepSeek/) | Live | The browser loads the static site and calls an HTTPS API that allows cross-origin requests. Enter your chat API key in Settings. |
+| Windows and Android apps | [v0.1.2 preview](https://github.com/IZRINO/chat-DeepSeek/releases/tag/v0.1.2) | The apps bundle the UI with Tauri 2 and use native networking to connect directly to the configured HTTP or HTTPS API. |
+
+### Cross-origin limits on GitHub Pages
+
+The web app's origin is `https://izrino.github.io`. Even over HTTPS, the API must allow [CORS preflights](https://developer.mozilla.org/en-US/docs/Glossary/Preflight_request) and actual requests from that origin. On 2026-11-20, `https://lingtuapi.net/v1/messages` responded to the web app's `OPTIONS` preflight with `403` and no `Access-Control-Allow-Origin` header, so the browser did not send the chat request. Ask the provider to allow the origin, methods, and request headers (`content-type`, `x-api-key`, and `anthropic-version` for text chat). An HTTPS page also cannot call a public `http://` API directly.
+
+Native apps are not subject to browser CORS, but still require the correct base URL, Anthropic Messages support, model ID, and API key. Plain HTTP transmits keys, messages, and attachments unencrypted; prefer HTTPS.
+
+For a relay you manage, enter its HTTPS base URL (for example, `https://relay.example.com/v1`, without `/messages`), API key, and model ID in Settings → API. The relay must accept Anthropic Messages requests and forward SSE chunks as they arrive. For web use, configure CORS on the relay.
 
 ## Getting started
 
@@ -27,6 +38,18 @@ pnpm build
 
 The output is written to `dist/`. Deploy it to a static web server or open `dist/index.html` directly. Opening the file directly requires browser support for storage on `file://` pages and an API service that permits their cross-origin requests.
 
+### Build the native apps
+
+Follow the [Tauri prerequisites](https://v2.tauri.app/start/prerequisites/) for Rust, Windows C++ Build Tools, and WebView2. For Android, install JDK 17, Android SDK Platform 37.0, and the NDK, and set `JAVA_HOME`, `ANDROID_HOME`, and `NDK_HOME`.
+
+```powershell
+pnpm tauri dev
+pnpm tauri build
+pnpm tauri android build --debug --apk --target aarch64
+```
+
+The Windows installer is under `src-tauri/target/release/bundle/nsis/`. The Android command builds an ARM64 debug APK under `src-tauri/gen/android/app/build/outputs/apk/`; use `--target x86_64` for x86_64 emulators. Configure [Android release signing](https://v2.tauri.app/distribute/sign/android/) before distributing a release. The apps open offline, but generating replies still requires an API connection. See the [packaging notes (Chinese)](docs/app-packaging.md).
+
 ## Features
 
 - Multiple conversations with automatic titles, renaming, and deletion; edit prompts, regenerate replies, and switch between message branches.
@@ -37,7 +60,7 @@ The output is written to `dist/`. Deploy it to a static web server or open `dist
 
 ## Data and storage
 
-Your API key and settings are stored in the browser's localStorage. Conversations and original attachments are stored in IndexedDB. Local data is isolated by browser profile and site origin. Sending messages, uploading attachments, and using speech features sends the relevant content to the configured API service.
+Your API key and settings are stored in localStorage. Conversations and original attachments are stored in IndexedDB. The web and installed apps have separate local storage. Sending messages, uploading attachments, and using speech features sends the relevant content to the configured API service.
 
 History import and export in Settings use ZIP archives. After confirmation and successful validation, importing replaces all local conversations and attachments. Exports include conversations and locally available original images, but exclude API keys, settings, and original non-image attachments. See the [history import/export documentation (Chinese)](src/services/chat/history/README.md) for the archive format and preservation details.
 
@@ -56,6 +79,8 @@ Settings → Data → Delete all chats clears all local conversations, original 
 [rspack.config.ts](rspack.config.ts) uses `https://api.deepseek.com` by default. Use `createConfig({ apiOrigin, devServer })` to customize the API origin and development server proxy.
 
 Use Settings → API to configure an Anthropic Messages-compatible URL, model ID, and chat API key. The default model is `deepseek-flash` and DeepThink defaults to `high` when enabled. With a separate DeepSeek Search Key, DeepSeek handles the current turn’s web search, image search, or link reading, and the selected chat model answers using the results.
+
+The native apps use Anthropic Messages, [one of the protocols dsh supports](https://github.com/deepseek-ai/deepseek-harness/blob/master/docs/user/guide/providers.md#add-a-custom-model-api), and identify themselves as `chat-DeepSeek`. Services that only expose another protocol, such as OpenAI Chat Completions, are not directly compatible. Files and speech also require the corresponding endpoints.
 
 The context window and output limit default to 1M (1,048,576) and 384K (393,216) tokens. The client reserves space for the configured output and trims older rounds using a token estimate. The conversation footer uses reported usage to show output speed, total session tokens, cache hits, and context utilization.
 

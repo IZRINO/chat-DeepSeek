@@ -1,0 +1,41 @@
+{
+  "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
+  "productName": "真DEEPSEEK",
+  "version": "../package.json",
+  "identifier": "io.github.izrino.chatdeepseek",
+  "build": {
+    "frontendDist": "../dist",
+    "devUrl": "http://127.0.0.1:8090",
+    "beforeDevCommand": "pnpm dev",
+    "beforeBuildCommand": "pnpm client:assets"
+  },
+  "app": {
+    "windows": [
+      {
+        "title": "真DEEPSEEK",
+        "width": 1024,
+        "height": 720,
+        "dragDropEnabled": false,
+        "useHttpsScheme": true
+      }
+    ],
+    "security": {
+      "csp": "default-src 'self'; script-src 'self'; connect-src 'self' ipc: https://ipc.localhost; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https:; media-src 'self' data: blob:; font-src 'self'; object-src 'none'; frame-src 'none'; base-uri 'none'; form-action 'none'",
+      "devCsp": "default-src 'self'; script-src 'self'; connect-src 'self' ipc: https://ipc.localhost http://ipc.localhost ws:; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https:; media-src 'self' data: blob:; font-src 'self'; object-src 'none'; frame-src 'none'; base-uri 'none'; form-action 'none'"
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["nsis"],
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ],
+    "android": {
+      "debugApplicationIdSuffix": ".debug"
+    }
+  }
+}

@@ -1,3 +1,4 @@
+import { isTauri } from '@tauri-apps/api/core'
 import { translate, type TranslationMessage } from '../../i18n/index.js'
 import { isDeepSeekApi, messagesBaseUrl, type ApiConnection } from './config.js'
 import { readMessageEvent } from './parseEvent.js'
@@ -66,7 +67,15 @@ const readErrorResponse = async (
 export const request = async (url: string, init: RequestInit): Promise<Response> => {
   let response: Response
   try {
-    response = await fetch(url, init)
+    if (isTauri()) {
+      const { fetch: nativeFetch } = await import('@tauri-apps/plugin-http')
+      const headers = new Headers(init.headers)
+      headers.set('User-Agent', 'chat-DeepSeek')
+      // 原生插件不使用浏览器的 redirect 选项；不要把 API Key 跟随跳转发送。
+      response = await nativeFetch(url, { ...init, headers, maxRedirections: 0 })
+    } else {
+      response = await fetch(url, init)
+    }
   } catch (error) {
     if (init.signal?.aborted) {
       throw error

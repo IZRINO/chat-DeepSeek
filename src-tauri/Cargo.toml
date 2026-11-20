@@ -1,0 +1,19 @@
+[package]
+name = "chat-deepseek"
+version = "0.1.2"
+description = "真DEEPSEEK chat client"
+license = "MIT"
+repository = "https://github.com/IZRINO/chat-DeepSeek"
+edition = "2024"
+rust-version = "1.90"
+
+[lib]
+name = "chat_deepseek_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2.7.6", features = [] }
+
+[dependencies]
+tauri = { version = "2.12.7", features = [] }
+tauri-plugin-http = { version = "2.9.0", default-features = false, features = ["rustls-tls", "http2", "charset", "system-proxy"] }

@@ -1,0 +1,30 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "Allow the local chat window to connect to the configured chat and speech API.",
+  "windows": [
+    "main"
+  ],
+  "permissions": [
+    "core:default",
+    {
+      "identifier": "http:default",
+      "allow": [
+        "https://api.deepseek.com/models",
+        "https://api.deepseek.com/v1/models",
+        "https://*:*/*/v1/:endpoint(messages|files)",
+        "https://*:*/v1/:endpoint(messages|files)",
+        "https://*:*/*/v1/files/:id",
+        "https://*:*/v1/files/:id",
+        "https://*:*/*/v1/tools/:tool(asr|tts)",
+        "https://*:*/v1/tools/:tool(asr|tts)",
+        "http://*:*/*/v1/:endpoint(messages|files)",
+        "http://*:*/v1/:endpoint(messages|files)",
+        "http://*:*/*/v1/files/:id",
+        "http://*:*/v1/files/:id",
+        "http://*:*/*/v1/tools/:tool(asr|tts)",
+        "http://*:*/v1/tools/:tool(asr|tts)"
+      ]
+    }
+  ]
+}
