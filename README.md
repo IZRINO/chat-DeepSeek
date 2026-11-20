@@ -7,13 +7,13 @@ English | [简体中文](README.zh-CN.md)
 | Edition | Status | How it connects |
 | --- | --- | --- |
 | [GitHub Pages](https://izrino.github.io/chat-DeepSeek/) | Live | The browser loads the static site and calls an HTTPS API that allows cross-origin requests. Enter your chat API key in Settings. |
-| Windows and Android apps | [v0.1.2 preview](https://github.com/IZRINO/chat-DeepSeek/releases/tag/v0.1.2) | The apps bundle the UI with Tauri 2 and connect directly to the configured HTTP or HTTPS API. |
+| Windows and Android apps | [v0.1.3 preview](https://github.com/IZRINO/chat-DeepSeek/releases/tag/v0.1.3) | The apps bundle the UI with Tauri 2 and connect directly to the configured HTTP or HTTPS API. |
 
 ### Cross-origin limits on GitHub Pages
 
 The web app's origin is `https://izrino.github.io`. Even over HTTPS, the API must allow [CORS preflights](https://developer.mozilla.org/en-US/docs/Glossary/Preflight_request) and actual requests from that origin. On 2026-11-20, `https://lingtuapi.net/v1/messages` responded to the web app's `OPTIONS` preflight with `403` and no `Access-Control-Allow-Origin` header, so the browser did not send the chat request. Ask the provider to allow the origin, methods, and request headers (`content-type`, `x-api-key`, and `anthropic-version` for text chat). An HTTPS page also cannot call a public `http://` API directly.
 
-The apps use native networking for third-party APIs and DeepSeek's standalone Search/Fetch APIs. Chat still requires the correct base URL, Anthropic Messages support, model ID, and key. Prefer HTTPS: plain HTTP transmits keys, messages, and attachments unencrypted. Only DeepSeek's official Messages endpoint uses WebView `fetch` in the current source. The published v0.1.2 does not include standalone Search/Fetch.
+The installed apps send chat and web lookup requests through native networking. Chat requires the correct base URL, Anthropic Messages support, model ID, and key. Use HTTPS to encrypt keys, messages, and attachments in transit.
 
 For a relay you manage, enter its HTTPS base URL (for example, `https://relay.example.com/v1`, without `/messages`), API key, and model ID in Settings → API. The relay must accept Anthropic Messages requests and forward SSE chunks as they arrive. For web use, configure CORS on the relay.
 
@@ -79,9 +79,9 @@ Settings → Data → Delete all chats clears all local conversations, original 
 
 [rspack.config.ts](rspack.config.ts) uses `https://api.deepseek.com` by default. Use `createConfig({ apiOrigin, devServer })` to customize the API origin and development server proxy.
 
-Use Settings → API to configure an Anthropic Messages-compatible URL, model ID, and chat API key. The default model is `deepseek-flash`; DeepThink defaults to `high` when enabled. With a separate official DeepSeek key, Smart Search calls `POST /v1/tools/search` and passes up to five sources and summaries to the chat model. Explicit links use `POST /v1/tools/fetch` instead, up to three distinct links, even with Smart Search off. Both use Bearer auth, do not support image search, and are [billed per request returning results](https://api-docs.deepseek.com/guides/search#billing), not as chat tokens.
+Use Settings → API to configure an Anthropic Messages-compatible URL, model ID, and chat API key. The default model is `deepseek-flash`, and DeepThink defaults to `high` when enabled. With a separate official DeepSeek key, Smart Search uses the server-side tools on `https://api.deepseek.com/anthropic/v1/messages` and passes sources and summaries to the configured chat model. Explicit links can trigger lookup with Smart Search off. The search request can include attached images when Smart Search is on.
 
-Expand **Error details** on a failed reply. `pnpm dev` and `pnpm tauri dev` print `[chat-api]` diagnostics in the terminal. Windows debug builds also print `[chat-api:webview2]` if WebView2 reports a network error for official Messages. Logs omit keys, message bodies, and attachments.
+Expand **Error details** on a failed reply. The browser console and the `pnpm dev` terminal show `[chat-api]` diagnostics. The installed apps log native request failures as `[chat-api:rust]`. Logs omit keys, message bodies, and attachments.
 
 The native apps use Anthropic Messages, [one of the protocols dsh supports](https://github.com/deepseek-ai/deepseek-harness/blob/master/docs/user/guide/providers.md#add-a-custom-model-api), and identify native HTTP requests as `chat-DeepSeek`. Services that only expose another protocol, such as OpenAI Chat Completions, are not directly compatible. Files and speech also require the corresponding endpoints.
 
